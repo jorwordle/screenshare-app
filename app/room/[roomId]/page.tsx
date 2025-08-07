@@ -47,6 +47,7 @@ export default function RoomPage() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [peerScreenSharing, setPeerScreenSharing] = useState(false);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [copied, setCopied] = useState(false);
   const [roomFull, setRoomFull] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,15 +174,31 @@ export default function RoomPage() {
       return;
     }
 
+    if (connectionState !== 'connected') {
+      setError('Please wait for peer connection to establish');
+      setTimeout(() => setError(null), 3000);
+      return;
+    }
+
     if (isScreenSharing) {
       webrtcRef.current.stopScreenShare();
       setIsScreenSharing(false);
+      setLocalStream(null);
       socketManager.emit('screen-share-stopped', { roomId });
     } else {
       try {
         console.log('Starting screen share...');
-        await webrtcRef.current.startScreenShare();
+        const stream = await webrtcRef.current.startScreenShare();
+        setLocalStream(stream);
         setIsScreenSharing(true);
+        
+        // Need to renegotiate the connection after adding stream
+        if (partnerId.current && connectionState === 'connected') {
+          console.log('Renegotiating connection with new stream...');
+          const offer = await webrtcRef.current.createOffer();
+          socketManager.emit('offer', { offer, to: partnerId.current });
+        }
+        
         socketManager.emit('screen-share-started', { roomId });
         console.log('Screen share started successfully');
       } catch (error: any) {
@@ -274,9 +291,9 @@ export default function RoomPage() {
         {/* Video Area */}
         <div className="flex-1 flex flex-col">
           <VideoDisplay 
-            stream={remoteStream}
-            isScreenSharing={peerScreenSharing}
-            userName={users.find(u => u.id === partnerId.current)?.name || 'Peer'}
+            stream={remoteStream || localStream}
+            isScreenSharing={peerScreenSharing || isScreenSharing}
+            userName={remoteStream ? (users.find(u => u.id === partnerId.current)?.name || 'Peer') : 'Your Screen'}
           />
           
           <ControlBar

@@ -77,30 +77,42 @@ export class WebRTCConnection {
 
   async startScreenShare(): Promise<MediaStream> {
     try {
+      // Simplified constraints for better compatibility
       const constraints = {
-        video: {
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 },
-          frameRate: { ideal: 30 },
-          cursor: 'always' as const
-        },
-        audio: false // Disable audio for now to simplify
+        video: true,
+        audio: false
       };
 
       // @ts-ignore - getDisplayMedia types
       this.localStream = await navigator.mediaDevices.getDisplayMedia(constraints);
       
-      // Add tracks to peer connection
-      if (this.pc && this.localStream) {
-        this.localStream.getTracks().forEach(track => {
-          this.pc!.addTrack(track, this.localStream!);
+      console.log('Got display media stream:', this.localStream.id);
+      
+      // Remove any existing senders first
+      if (this.pc) {
+        const senders = this.pc.getSenders();
+        senders.forEach(sender => {
+          if (sender.track?.kind === 'video') {
+            this.pc!.removeTrack(sender);
+          }
         });
+        
+        // Add new video track
+        const videoTrack = this.localStream.getVideoTracks()[0];
+        if (videoTrack) {
+          const sender = this.pc.addTrack(videoTrack, this.localStream);
+          console.log('Added video track to peer connection:', videoTrack.id);
+        }
       }
 
       // Handle screen share ending
-      this.localStream.getVideoTracks()[0].onended = () => {
-        this.stopScreenShare();
-      };
+      const videoTrack = this.localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          console.log('Screen share ended by user');
+          this.stopScreenShare();
+        };
+      }
 
       return this.localStream;
     } catch (error) {
@@ -139,7 +151,7 @@ export class WebRTCConnection {
     
     const offer = await this.pc.createOffer({
       offerToReceiveVideo: true,
-      offerToReceiveAudio: true
+      offerToReceiveAudio: false
     });
     
     await this.pc.setLocalDescription(offer);
@@ -199,5 +211,13 @@ export class WebRTCConnection {
 
   getConnectionState(): RTCPeerConnectionState | null {
     return this.pc ? this.pc.connectionState : null;
+  }
+
+  getLocalStream(): MediaStream | null {
+    return this.localStream;
+  }
+
+  getRemoteStream(): MediaStream | null {
+    return this.remoteStream;
   }
 }
