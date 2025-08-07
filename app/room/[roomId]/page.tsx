@@ -8,6 +8,7 @@ import ChatPanel from '@/components/ChatPanel';
 import VideoDisplay from '@/components/VideoDisplay';
 import ControlBar from '@/components/ControlBar';
 import ConnectionStatus from '@/components/ConnectionStatus';
+import StreamStats from '@/components/StreamStats';
 import { 
   Monitor, 
   MonitorOff, 
@@ -301,11 +302,17 @@ export default function RoomPage() {
       {/* Main Content */}
       <div className="flex-1 flex">
         {/* Video Area */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col relative">
           <VideoDisplay 
-            stream={peerScreenSharing ? remoteStream : (isScreenSharing ? localStream : null)}
+            stream={isScreenSharing ? localStream : (peerScreenSharing ? remoteStream : null)}
             isScreenSharing={peerScreenSharing || isScreenSharing}
-            userName={peerScreenSharing ? (users.find(u => u.id === partnerId.current)?.name || 'Peer') : (isScreenSharing ? 'Your Screen' : '')}
+            userName={isScreenSharing ? 'Your Screen' : (peerScreenSharing ? `${users.find(u => u.id === partnerId.current)?.name || 'Peer'}'s Screen` : '')}
+          />
+          
+          {/* Stream Stats Overlay */}
+          <StreamStats 
+            webrtc={webrtcRef.current}
+            isActive={peerScreenSharing || isScreenSharing}
           />
           
           <ControlBar

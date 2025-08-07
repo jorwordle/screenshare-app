@@ -77,16 +77,21 @@ export class WebRTCConnection {
 
   async startScreenShare(): Promise<MediaStream> {
     try {
-      // High quality 1080p/60fps constraints
+      // Try high quality first, with fallback options
       const constraints = {
         video: {
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 },
-          frameRate: { ideal: 60, max: 60 },
-          cursor: 'always' as const,
-          displaySurface: 'monitor' as const
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
+          frameRate: { ideal: 60, min: 30 },
+          cursor: 'always' as const
         },
-        audio: false
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          sampleRate: { ideal: 48000, min: 44100 },
+          channelCount: { ideal: 2, min: 1 },
+          autoGainControl: false
+        }
       };
 
       // @ts-ignore - getDisplayMedia types
@@ -98,16 +103,50 @@ export class WebRTCConnection {
       if (this.pc) {
         const senders = this.pc.getSenders();
         senders.forEach(sender => {
-          if (sender.track?.kind === 'video') {
+          if (sender.track) {
             this.pc!.removeTrack(sender);
           }
         });
         
-        // Add new video track
+        // Add video track with bitrate configuration
         const videoTrack = this.localStream.getVideoTracks()[0];
         if (videoTrack) {
           const sender = this.pc.addTrack(videoTrack, this.localStream);
-          console.log('Added video track to peer connection:', videoTrack.id);
+          
+          // Get actual video settings to determine appropriate bitrate
+          const settings = videoTrack.getSettings();
+          const width = settings.width || 1920;
+          const height = settings.height || 1080;
+          const frameRate = settings.frameRate || 30;
+          
+          // Calculate optimal bitrate based on actual resolution
+          let targetBitrate = 8000000; // Default 8 Mbps for 1080p/60fps
+          if (width <= 1280 && height <= 720) {
+            targetBitrate = 3000000; // 3 Mbps for 720p
+          } else if (width <= 1920 && height <= 1080 && frameRate <= 30) {
+            targetBitrate = 5000000; // 5 Mbps for 1080p/30fps
+          }
+          
+          // Configure bitrate for video
+          const params = sender.getParameters();
+          if (!params.encodings) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].maxBitrate = targetBitrate;
+          params.encodings[0].maxFramerate = frameRate;
+          sender.setParameters(params);
+          
+          console.log(`Added video track: ${width}x${height}@${frameRate}fps, bitrate: ${targetBitrate/1000000}Mbps`);
+          
+          // Start monitoring for adaptive quality
+          this.startAdaptiveQuality(sender);
+        }
+        
+        // Add audio track if available
+        const audioTrack = this.localStream.getAudioTracks()[0];
+        if (audioTrack) {
+          const audioSender = this.pc.addTrack(audioTrack, this.localStream);
+          console.log('Added audio track:', audioTrack.id);
         }
       }
 
@@ -131,6 +170,22 @@ export class WebRTCConnection {
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;
+    }
+    
+    // Stop adaptive quality monitoring
+    if (this.adaptiveQualityInterval) {
+      clearInterval(this.adaptiveQualityInterval);
+      this.adaptiveQualityInterval = null;
+    }
+    
+    // Remove all senders
+    if (this.pc) {
+      const senders = this.pc.getSenders();
+      senders.forEach(sender => {
+        if (sender.track) {
+          this.pc!.removeTrack(sender);
+        }
+      });
     }
   }
 
@@ -164,11 +219,26 @@ export class WebRTCConnection {
     
     const offer = await this.pc.createOffer({
       offerToReceiveVideo: true,
-      offerToReceiveAudio: false
+      offerToReceiveAudio: true
     });
+    
+    // Modify SDP to increase bitrate
+    offer.sdp = this.increaseBitrate(offer.sdp!);
     
     await this.pc.setLocalDescription(offer);
     return offer;
+  }
+
+  private increaseBitrate(sdp: string): string {
+    // Replace existing b=AS line or add one for video
+    let modifiedSdp = sdp.replace(/b=AS:.*\r\n/g, '');
+    modifiedSdp = modifiedSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:8000\r\n');
+    
+    // Set specific bitrate for VP9/H264
+    modifiedSdp = modifiedSdp.replace(/a=rtpmap:(\d+) VP9\/90000\r\n/g, 
+      'a=rtpmap:$1 VP9/90000\r\na=fmtp:$1 max-fs=8160;max-fr=60\r\n');
+    
+    return modifiedSdp;
   }
 
   private getHighQualityCodecs(): RTCRtpCodecCapability[] {
@@ -241,5 +311,97 @@ export class WebRTCConnection {
 
   getRemoteStream(): MediaStream | null {
     return this.remoteStream;
+  }
+
+  private adaptiveQualityInterval: NodeJS.Timeout | null = null;
+
+  private startAdaptiveQuality(sender: RTCRtpSender) {
+    if (this.adaptiveQualityInterval) {
+      clearInterval(this.adaptiveQualityInterval);
+    }
+
+    this.adaptiveQualityInterval = setInterval(async () => {
+      if (!this.pc || this.pc.connectionState !== 'connected') return;
+
+      const stats = await sender.getStats();
+      let currentBitrate = 0;
+      let packetLossRate = 0;
+
+      stats.forEach((report) => {
+        if (report.type === 'outbound-rtp' && report.kind === 'video') {
+          // Calculate packet loss rate
+          const packetsLost = report.packetsLost || 0;
+          const packetsSent = report.packetsSent || 1;
+          packetLossRate = (packetsLost / packetsSent) * 100;
+          
+          // Get current bitrate
+          if (report.bytesSent && report.timestamp) {
+            currentBitrate = report.bytesSent * 8 / (report.timestamp / 1000);
+          }
+        }
+      });
+
+      // Adjust quality based on network conditions
+      const params = sender.getParameters();
+      if (params.encodings && params.encodings[0]) {
+        const currentMax = params.encodings[0].maxBitrate || 8000000;
+        let newBitrate = currentMax;
+
+        // Reduce bitrate if high packet loss
+        if (packetLossRate > 5) {
+          newBitrate = Math.max(1000000, currentMax * 0.7); // Reduce by 30%
+          console.log(`High packet loss (${packetLossRate.toFixed(1)}%), reducing bitrate to ${newBitrate/1000000}Mbps`);
+        } else if (packetLossRate < 1 && currentMax < 8000000) {
+          // Try to increase bitrate if network is good
+          newBitrate = Math.min(8000000, currentMax * 1.2); // Increase by 20%
+          console.log(`Good network conditions, increasing bitrate to ${newBitrate/1000000}Mbps`);
+        }
+
+        if (newBitrate !== currentMax) {
+          params.encodings[0].maxBitrate = Math.round(newBitrate);
+          sender.setParameters(params);
+        }
+      }
+    }, 3000); // Check every 3 seconds
+  }
+
+  async getStreamStats(): Promise<{
+    video: { width: number; height: number; fps: number; bitrate: number };
+    audio: { bitrate: number };
+    connection: { rtt: number; packetLoss: number };
+  } | null> {
+    if (!this.pc) return null;
+    
+    const stats = await this.pc.getStats();
+    const result = {
+      video: { width: 0, height: 0, fps: 0, bitrate: 0 },
+      audio: { bitrate: 0 },
+      connection: { rtt: 0, packetLoss: 0 }
+    };
+    
+    let lastBytes = 0;
+    let lastTimestamp = 0;
+    
+    stats.forEach((report) => {
+      if (report.type === 'inbound-rtp' && report.kind === 'video') {
+        result.video.width = report.frameWidth || 0;
+        result.video.height = report.frameHeight || 0;
+        result.video.fps = report.framesPerSecond || 0;
+        
+        if (lastTimestamp && report.timestamp > lastTimestamp) {
+          const bitrate = 8 * (report.bytesReceived - lastBytes) / (report.timestamp - lastTimestamp);
+          result.video.bitrate = Math.round(bitrate);
+        }
+      } else if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+        if (lastTimestamp && report.timestamp > lastTimestamp) {
+          const bitrate = 8 * (report.bytesReceived - lastBytes) / (report.timestamp - lastTimestamp);
+          result.audio.bitrate = Math.round(bitrate);
+        }
+      } else if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+        result.connection.rtt = Math.round((report.currentRoundTripTime || 0) * 1000);
+      }
+    });
+    
+    return result;
   }
 }
