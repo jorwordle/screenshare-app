@@ -6,8 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "server": "node server/index.js",
-    "lint": "next lint"
+    "lint": "next lint",
+    "server": "cd server && node index.js"
   },
   "dependencies": {
     "next": "14.0.0",
