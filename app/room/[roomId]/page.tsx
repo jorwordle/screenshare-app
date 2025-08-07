@@ -167,7 +167,11 @@ export default function RoomPage() {
   };
 
   const toggleScreenShare = async () => {
-    if (!webrtcRef.current) return;
+    if (!webrtcRef.current) {
+      console.error('WebRTC not initialized');
+      setError('Connection not established. Please wait and try again.');
+      return;
+    }
 
     if (isScreenSharing) {
       webrtcRef.current.stopScreenShare();
@@ -175,12 +179,21 @@ export default function RoomPage() {
       socketManager.emit('screen-share-stopped', { roomId });
     } else {
       try {
+        console.log('Starting screen share...');
         await webrtcRef.current.startScreenShare();
         setIsScreenSharing(true);
         socketManager.emit('screen-share-started', { roomId });
-      } catch (error) {
+        console.log('Screen share started successfully');
+      } catch (error: any) {
         console.error('Failed to start screen share:', error);
-        setError('Failed to start screen sharing. Please try again.');
+        if (error.name === 'NotAllowedError') {
+          setError('Screen sharing permission denied. Please allow screen sharing and try again.');
+        } else if (error.name === 'NotFoundError') {
+          setError('No screen sharing source available.');
+        } else {
+          setError(`Failed to start screen sharing: ${error.message || 'Unknown error'}`);
+        }
+        setTimeout(() => setError(null), 5000);
       }
     }
   };

@@ -3,6 +3,7 @@ builder = "nixpacks"
 buildCommand = "cd server && npm ci"
 
 [deploy]
-startCommand = "cd server && node index.js"
+startCommand = "cd server && PORT=$PORT node index.js"
+healthcheckPath = "/health"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

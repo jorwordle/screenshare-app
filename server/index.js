@@ -6,9 +6,33 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
+// Allow multiple origins for development and production
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  process.env.CLIENT_URL
+].filter(Boolean);
+
 const io = socketIO(server, {
   cors: {
-    origin: process.env.CLIENT_URL || ["http://localhost:3000", "https://*.netlify.app"],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, Postman, etc)
+      if (!origin) return callback(null, true);
+      
+      // Allow any Netlify domain
+      if (origin.includes('netlify.app') || origin.includes('netlify.live')) {
+        return callback(null, true);
+      }
+      
+      // Allow specified origins
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      
+      // Log rejected origins for debugging
+      console.log('Rejected origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    },
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -210,4 +234,9 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Signaling server running on port ${PORT}`);
+  console.log('Environment:', {
+    port: PORT,
+    clientUrl: process.env.CLIENT_URL || 'Not set',
+    nodeEnv: process.env.NODE_ENV || 'development'
+  });
 });
