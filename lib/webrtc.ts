@@ -77,9 +77,15 @@ export class WebRTCConnection {
 
   async startScreenShare(): Promise<MediaStream> {
     try {
-      // Simplified constraints for better compatibility
+      // High quality 1080p/60fps constraints
       const constraints = {
-        video: true,
+        video: {
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
+          frameRate: { ideal: 60, max: 60 },
+          cursor: 'always' as const,
+          displaySurface: 'monitor' as const
+        },
         audio: false
       };
 
@@ -149,6 +155,13 @@ export class WebRTCConnection {
   async createOffer(): Promise<RTCSessionDescriptionInit> {
     if (!this.pc) throw new Error('Peer connection not initialized');
     
+    const transceivers = this.pc.getTransceivers();
+    transceivers.forEach(transceiver => {
+      if (transceiver.receiver.track?.kind === 'video') {
+        transceiver.setCodecPreferences(this.getHighQualityCodecs());
+      }
+    });
+    
     const offer = await this.pc.createOffer({
       offerToReceiveVideo: true,
       offerToReceiveAudio: false
@@ -156,6 +169,15 @@ export class WebRTCConnection {
     
     await this.pc.setLocalDescription(offer);
     return offer;
+  }
+
+  private getHighQualityCodecs(): RTCRtpCodecCapability[] {
+    const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs || [];
+    // Prefer VP9 or H264 for better quality
+    return codecs.filter(codec => 
+      codec.mimeType.includes('VP9') || 
+      codec.mimeType.includes('H264')
+    );
   }
 
   async createAnswer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {

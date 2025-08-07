@@ -8,13 +8,15 @@ interface ControlBarProps {
   onToggleScreenShare: () => void;
   onLeaveRoom: () => void;
   disabled?: boolean;
+  peerScreenSharing?: boolean;
 }
 
 export default function ControlBar({
   isScreenSharing,
   onToggleScreenShare,
   onLeaveRoom,
-  disabled = false
+  disabled = false,
+  peerScreenSharing = false
 }: ControlBarProps) {
   const [showTooltip, setShowTooltip] = useState<string | null>(null);
 
@@ -25,14 +27,16 @@ export default function ControlBar({
         <div className="relative">
           <button
             onClick={onToggleScreenShare}
-            disabled={disabled}
+            disabled={disabled || peerScreenSharing}
             onMouseEnter={() => setShowTooltip('screen')}
             onMouseLeave={() => setShowTooltip(null)}
             className={`p-3 rounded-full transition-all ${
               isScreenSharing
                 ? 'bg-green-600 hover:bg-green-700 text-white'
+                : peerScreenSharing
+                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
                 : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-            } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            } ${(disabled || peerScreenSharing) ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             {isScreenSharing ? (
               <Monitor className="w-6 h-6" />
@@ -42,7 +46,7 @@ export default function ControlBar({
           </button>
           {showTooltip === 'screen' && (
             <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap">
-              {isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
+              {peerScreenSharing ? 'Peer is sharing' : (isScreenSharing ? 'Stop Sharing' : 'Share Screen')}
             </div>
           )}
         </div>

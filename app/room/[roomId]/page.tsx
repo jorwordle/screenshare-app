@@ -133,10 +133,15 @@ export default function RoomPage() {
     });
 
     socket.on('peer-screen-share-started', ({ userId }) => {
+      console.log('Peer started screen sharing');
       setPeerScreenSharing(true);
+      // Disable our share button when peer is sharing
+      setIsScreenSharing(false);
+      setLocalStream(null);
     });
 
     socket.on('peer-screen-share-stopped', ({ userId }) => {
+      console.log('Peer stopped screen sharing');
       setPeerScreenSharing(false);
     });
 
@@ -176,6 +181,13 @@ export default function RoomPage() {
 
     if (connectionState !== 'connected') {
       setError('Please wait for peer connection to establish');
+      setTimeout(() => setError(null), 3000);
+      return;
+    }
+
+    // Prevent sharing if peer is already sharing
+    if (peerScreenSharing) {
+      setError('The other user is already sharing their screen');
       setTimeout(() => setError(null), 3000);
       return;
     }
@@ -291,9 +303,9 @@ export default function RoomPage() {
         {/* Video Area */}
         <div className="flex-1 flex flex-col">
           <VideoDisplay 
-            stream={remoteStream || localStream}
+            stream={peerScreenSharing ? remoteStream : (isScreenSharing ? localStream : null)}
             isScreenSharing={peerScreenSharing || isScreenSharing}
-            userName={remoteStream ? (users.find(u => u.id === partnerId.current)?.name || 'Peer') : 'Your Screen'}
+            userName={peerScreenSharing ? (users.find(u => u.id === partnerId.current)?.name || 'Peer') : (isScreenSharing ? 'Your Screen' : '')}
           />
           
           <ControlBar
@@ -301,6 +313,7 @@ export default function RoomPage() {
             onToggleScreenShare={toggleScreenShare}
             onLeaveRoom={leaveRoom}
             disabled={users.length < 2 || connectionState !== 'connected'}
+            peerScreenSharing={peerScreenSharing}
           />
         </div>
 
