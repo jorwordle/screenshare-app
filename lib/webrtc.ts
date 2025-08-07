@@ -51,8 +51,15 @@ export class WebRTCConnection {
 
     // Handle remote stream
     this.pc.ontrack = (event) => {
+      console.log('📡 ontrack event fired!', {
+        track: event.track.kind,
+        streams: event.streams.length,
+        trackId: event.track.id
+      });
+      
       if (event.streams && event.streams[0]) {
         this.remoteStream = event.streams[0];
+        console.log('🎬 Remote stream set:', this.remoteStream.id);
         if (this.onRemoteStream) {
           this.onRemoteStream(event.streams[0]);
         }
@@ -101,19 +108,26 @@ export class WebRTCConnection {
       
       console.log('Got display media stream:', this.localStream.id);
       
-      // Remove any existing senders first
+      // Don't remove tracks - just add/replace them
       if (this.pc) {
         const senders = this.pc.getSenders();
-        senders.forEach(sender => {
-          if (sender.track) {
-            this.pc!.removeTrack(sender);
-          }
-        });
+        let videoSender = senders.find(s => s.track?.kind === 'video');
+        let audioSender = senders.find(s => s.track?.kind === 'audio');
         
-        // Add video track with bitrate configuration
+        // Add or replace video track with bitrate configuration
         const videoTrack = this.localStream.getVideoTracks()[0];
         if (videoTrack) {
-          const sender = this.pc.addTrack(videoTrack, this.localStream);
+          let sender;
+          if (videoSender && videoSender.track) {
+            // Replace existing video track
+            await videoSender.replaceTrack(videoTrack);
+            sender = videoSender;
+            console.log('Replaced existing video track');
+          } else {
+            // Add new video track
+            sender = this.pc.addTrack(videoTrack, this.localStream);
+            console.log('Added new video track');
+          }
           
           // Get actual video settings to determine appropriate bitrate
           const settings = videoTrack.getSettings();
@@ -150,11 +164,18 @@ export class WebRTCConnection {
           this.startAdaptiveQuality(sender);
         }
         
-        // Add audio track if available
+        // Add or replace audio track if available
         const audioTrack = this.localStream.getAudioTracks()[0];
         if (audioTrack) {
-          const audioSender = this.pc.addTrack(audioTrack, this.localStream);
-          console.log('Added audio track:', audioTrack.id);
+          if (audioSender && audioSender.track) {
+            // Replace existing audio track
+            await audioSender.replaceTrack(audioTrack);
+            console.log('Replaced existing audio track');
+          } else {
+            // Add new audio track
+            this.pc.addTrack(audioTrack, this.localStream);
+            console.log('Added new audio track');
+          }
         }
       }
 
@@ -186,12 +207,17 @@ export class WebRTCConnection {
       this.adaptiveQualityInterval = null;
     }
     
-    // Remove all senders
+    // Replace tracks with null instead of removing senders
     if (this.pc) {
       const senders = this.pc.getSenders();
-      senders.forEach(sender => {
+      senders.forEach(async (sender) => {
         if (sender.track) {
-          this.pc!.removeTrack(sender);
+          try {
+            await sender.replaceTrack(null);
+            console.log('Replaced track with null for:', sender.track.kind);
+          } catch (err) {
+            console.error('Error replacing track:', err);
+          }
         }
       });
     }

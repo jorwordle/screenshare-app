@@ -138,16 +138,22 @@ export default function RoomPage() {
     });
 
     socket.on('peer-screen-share-started', ({ userId }) => {
-      console.log('Peer started screen sharing');
+      console.log('Host started screen sharing');
       setPeerScreenSharing(true);
-      // Disable our share button when peer is sharing
-      setIsScreenSharing(false);
-      setLocalStream(null);
+      // Viewer should not be sharing
+      if (!isHost) {
+        setIsScreenSharing(false);
+        setLocalStream(null);
+      }
     });
 
     socket.on('peer-screen-share-stopped', ({ userId }) => {
-      console.log('Peer stopped screen sharing');
+      console.log('Host stopped screen sharing');
       setPeerScreenSharing(false);
+      // Clear remote stream display for viewer
+      if (!isHost) {
+        console.log('Host stopped sharing, clearing display');
+      }
     });
 
     return () => {
@@ -162,7 +168,12 @@ export default function RoomPage() {
     webrtcRef.current = new WebRTCConnection();
     
     webrtcRef.current.onRemoteStreamReceived((stream) => {
+      console.log('🎥 Received remote stream:', stream.id, 'Tracks:', stream.getTracks().length);
       setRemoteStream(stream);
+      // If we're not the host, this is the stream we should display
+      if (!isHost) {
+        console.log('Viewer received host stream!');
+      }
     });
 
     webrtcRef.current.onConnectionStateChanged((state) => {
@@ -308,9 +319,9 @@ export default function RoomPage() {
         {/* Video Area */}
         <div className="flex-1 flex flex-col relative">
           <VideoDisplay 
-            stream={isScreenSharing ? localStream : (peerScreenSharing ? remoteStream : null)}
-            isScreenSharing={peerScreenSharing || isScreenSharing}
-            userName={isScreenSharing ? 'Your Screen' : (peerScreenSharing ? `${users.find(u => u.id === partnerId.current)?.name || 'Peer'}'s Screen` : '')}
+            stream={isHost ? localStream : remoteStream}
+            isScreenSharing={isScreenSharing || peerScreenSharing}
+            userName={isHost && isScreenSharing ? 'Your Screen (Host)' : (!isHost && remoteStream ? `Host's Screen` : '')}
           />
           
           {/* Stream Stats Overlay - show on both screens */}
