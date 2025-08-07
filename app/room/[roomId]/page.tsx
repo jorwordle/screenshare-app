@@ -47,6 +47,7 @@ export default function RoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [peerScreenSharing, setPeerScreenSharing] = useState(false);
+  const [isHost, setIsHost] = useState(false);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [copied, setCopied] = useState(false);
@@ -69,6 +70,9 @@ export default function RoomPage() {
       setIsConnected(true);
       setUsers(roomUsers);
       setMessages(roomMessages);
+      // First user in room is the host
+      setIsHost(roomUsers.length === 1);
+      console.log(`Joined as ${roomUsers.length === 1 ? 'HOST' : 'VIEWER'}`);
     });
 
     socket.on('room-full', () => {
@@ -174,6 +178,13 @@ export default function RoomPage() {
   };
 
   const toggleScreenShare = async () => {
+    // Only host can share
+    if (!isHost) {
+      setError('Only the room host can share their screen');
+      setTimeout(() => setError(null), 3000);
+      return;
+    }
+
     if (!webrtcRef.current) {
       console.error('WebRTC not initialized');
       setError('Connection not established. Please wait and try again.');
@@ -182,13 +193,6 @@ export default function RoomPage() {
 
     if (connectionState !== 'connected') {
       setError('Please wait for peer connection to establish');
-      setTimeout(() => setError(null), 3000);
-      return;
-    }
-
-    // Prevent sharing if peer is already sharing
-    if (peerScreenSharing) {
-      setError('The other user is already sharing their screen');
       setTimeout(() => setError(null), 3000);
       return;
     }
@@ -309,18 +313,19 @@ export default function RoomPage() {
             userName={isScreenSharing ? 'Your Screen' : (peerScreenSharing ? `${users.find(u => u.id === partnerId.current)?.name || 'Peer'}'s Screen` : '')}
           />
           
-          {/* Stream Stats Overlay */}
+          {/* Stream Stats Overlay - show on both screens */}
           <StreamStats 
             webrtc={webrtcRef.current}
-            isActive={peerScreenSharing || isScreenSharing}
+            isActive={isScreenSharing || peerScreenSharing}
           />
           
           <ControlBar
             isScreenSharing={isScreenSharing}
             onToggleScreenShare={toggleScreenShare}
             onLeaveRoom={leaveRoom}
-            disabled={users.length < 2 || connectionState !== 'connected'}
+            disabled={!isHost || users.length < 2 || connectionState !== 'connected'}
             peerScreenSharing={peerScreenSharing}
+            isHost={isHost}
           />
         </div>
 

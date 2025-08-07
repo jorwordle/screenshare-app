@@ -9,6 +9,7 @@ interface ControlBarProps {
   onLeaveRoom: () => void;
   disabled?: boolean;
   peerScreenSharing?: boolean;
+  isHost?: boolean;
 }
 
 export default function ControlBar({
@@ -16,7 +17,8 @@ export default function ControlBar({
   onToggleScreenShare,
   onLeaveRoom,
   disabled = false,
-  peerScreenSharing = false
+  peerScreenSharing = false,
+  isHost = false
 }: ControlBarProps) {
   const [showTooltip, setShowTooltip] = useState<string | null>(null);
 
@@ -46,7 +48,7 @@ export default function ControlBar({
           </button>
           {showTooltip === 'screen' && (
             <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap">
-              {peerScreenSharing ? 'Peer is sharing' : (isScreenSharing ? 'Stop Sharing' : 'Share Screen')}
+              {!isHost ? 'Only host can share' : (isScreenSharing ? 'Stop Sharing' : 'Share Screen')}
             </div>
           )}
         </div>
@@ -102,7 +104,12 @@ export default function ControlBar({
       </div>
 
       {/* Status Text */}
-      {disabled && (
+      {disabled && !isHost && (
+        <div className="text-center mt-3 text-sm text-gray-500">
+          Only the host can share their screen
+        </div>
+      )}
+      {disabled && isHost && (
         <div className="text-center mt-3 text-sm text-gray-500">
           Waiting for another user to join...
         </div>

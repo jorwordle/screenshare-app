@@ -77,20 +77,22 @@ export class WebRTCConnection {
 
   async startScreenShare(): Promise<MediaStream> {
     try {
-      // Try high quality first, with fallback options
+      // Force maximum quality - no compromises!
       const constraints = {
         video: {
-          width: { ideal: 1920, min: 1280 },
-          height: { ideal: 1080, min: 720 },
-          frameRate: { ideal: 60, min: 30 },
-          cursor: 'always' as const
+          width: { exact: 1920 },
+          height: { exact: 1080 },
+          frameRate: { exact: 60 }, // Force 60fps!
+          cursor: 'always' as const,
+          displaySurface: 'monitor' as const
         },
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
-          sampleRate: { ideal: 48000, min: 44100 },
-          channelCount: { ideal: 2, min: 1 },
-          autoGainControl: false
+          sampleRate: 48000,
+          channelCount: 2,
+          autoGainControl: false,
+          sampleSize: 16
         }
       };
 
@@ -119,22 +121,28 @@ export class WebRTCConnection {
           const height = settings.height || 1080;
           const frameRate = settings.frameRate || 30;
           
-          // Calculate optimal bitrate based on actual resolution
-          let targetBitrate = 8000000; // Default 8 Mbps for 1080p/60fps
-          if (width <= 1280 && height <= 720) {
-            targetBitrate = 3000000; // 3 Mbps for 720p
-          } else if (width <= 1920 && height <= 1080 && frameRate <= 30) {
-            targetBitrate = 5000000; // 5 Mbps for 1080p/30fps
-          }
+          // Maximum quality settings - push it to the limit!
+          let targetBitrate = 12000000; // 12 Mbps for insane quality
           
-          // Configure bitrate for video
+          // Configure maximum quality parameters
           const params = sender.getParameters();
           if (!params.encodings) {
             params.encodings = [{}];
           }
-          params.encodings[0].maxBitrate = targetBitrate;
-          params.encodings[0].maxFramerate = frameRate;
-          sender.setParameters(params);
+          
+          // Force maximum quality settings
+          params.encodings[0] = {
+            ...params.encodings[0],
+            maxBitrate: targetBitrate,        // 12 Mbps
+            minBitrate: 8000000,               // Minimum 8 Mbps
+            maxFramerate: 60,                  // Force 60 FPS
+            scaleResolutionDownBy: 1,          // No downscaling
+            scalabilityMode: 'L1T1',           // Single layer for max quality
+            priority: 'very-high' as RTCPriorityType,
+            networkPriority: 'very-high' as RTCPriorityType
+          };
+          
+          await sender.setParameters(params);
           
           console.log(`Added video track: ${width}x${height}@${frameRate}fps, bitrate: ${targetBitrate/1000000}Mbps`);
           
@@ -230,13 +238,28 @@ export class WebRTCConnection {
   }
 
   private increaseBitrate(sdp: string): string {
-    // Replace existing b=AS line or add one for video
-    let modifiedSdp = sdp.replace(/b=AS:.*\r\n/g, '');
-    modifiedSdp = modifiedSdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:8000\r\n');
+    // Force maximum bitrate in SDP
+    let modifiedSdp = sdp;
     
-    // Set specific bitrate for VP9/H264
+    // Remove any existing bandwidth restrictions
+    modifiedSdp = modifiedSdp.replace(/b=AS:.*\r\n/g, '');
+    modifiedSdp = modifiedSdp.replace(/b=CT:.*\r\n/g, '');
+    
+    // Add 12 Mbps bandwidth for video
+    modifiedSdp = modifiedSdp.replace(/a=mid:video\r\n/g, 
+      'a=mid:video\r\nb=AS:12000\r\nb=CT:12000\r\n');
+    
+    // Force 60fps and max quality for VP9
     modifiedSdp = modifiedSdp.replace(/a=rtpmap:(\d+) VP9\/90000\r\n/g, 
-      'a=rtpmap:$1 VP9/90000\r\na=fmtp:$1 max-fs=8160;max-fr=60\r\n');
+      'a=rtpmap:$1 VP9/90000\r\na=fmtp:$1 max-fs=8160;max-fr=60;profile-id=0\r\n');
+    
+    // Force 60fps and max quality for H264
+    modifiedSdp = modifiedSdp.replace(/a=rtpmap:(\d+) H264\/90000\r\n/g,
+      'a=rtpmap:$1 H264/90000\r\na=fmtp:$1 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f;max-fs=8160;max-fps=3600\r\n');
+    
+    // Add x-google bandwidth parameters for Chrome
+    modifiedSdp = modifiedSdp.replace(/a=ssrc:(\d+) cname:(.*)\r\n/g,
+      'a=ssrc:$1 cname:$2\r\nx-google-min-bitrate:8000\r\nx-google-max-bitrate:12000\r\nx-google-start-bitrate:10000\r\n');
     
     return modifiedSdp;
   }
@@ -347,13 +370,13 @@ export class WebRTCConnection {
         const currentMax = params.encodings[0].maxBitrate || 8000000;
         let newBitrate = currentMax;
 
-        // Reduce bitrate if high packet loss
-        if (packetLossRate > 5) {
-          newBitrate = Math.max(1000000, currentMax * 0.7); // Reduce by 30%
-          console.log(`High packet loss (${packetLossRate.toFixed(1)}%), reducing bitrate to ${newBitrate/1000000}Mbps`);
-        } else if (packetLossRate < 1 && currentMax < 8000000) {
-          // Try to increase bitrate if network is good
-          newBitrate = Math.min(8000000, currentMax * 1.2); // Increase by 20%
+        // Only reduce if REALLY bad packet loss
+        if (packetLossRate > 10) {
+          newBitrate = Math.max(6000000, currentMax * 0.8); // Only reduce by 20%, min 6Mbps
+          console.log(`High packet loss (${packetLossRate.toFixed(1)}%), slightly reducing bitrate to ${newBitrate/1000000}Mbps`);
+        } else if (packetLossRate < 2 && currentMax < 12000000) {
+          // Aggressively increase bitrate if network is good
+          newBitrate = Math.min(12000000, currentMax * 1.3); // Increase by 30%
           console.log(`Good network conditions, increasing bitrate to ${newBitrate/1000000}Mbps`);
         }
 
