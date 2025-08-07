@@ -1,0 +1,31 @@
+services:
+  # Next.js Frontend
+  - type: web
+    name: screenshare-app
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SERVER_URL
+        fromService:
+          name: screenshare-signaling
+          type: web
+          property: host
+
+  # Signaling Server
+  - type: web
+    name: screenshare-signaling
+    env: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_URL
+        fromService:
+          name: screenshare-app
+          type: web
+          property: host
